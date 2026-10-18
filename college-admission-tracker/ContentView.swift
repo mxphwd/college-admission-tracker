@@ -74,6 +74,11 @@ struct ApplicationTimeline {
     let status: ApplicationStatus
     let countdown: String
     let eventName: String
+    let remainingDays: Int?
+
+    var isUrgentClosing: Bool {
+        status == .admissionsOpen && (remainingDays ?? .max) <= 7
+    }
 
     init(window: ApplicationWindow, now: Date = .now, calendar: Calendar = .current) {
         let today = calendar.startOfDay(for: now)
@@ -83,26 +88,31 @@ struct ApplicationTimeline {
 
         if today < opens {
             status = .waiting
-            countdown = Self.countdown(from: today, to: opens, calendar: calendar)
+            remainingDays = Self.days(from: today, to: opens, calendar: calendar)
             eventName = "opens"
         } else if today <= closes {
             status = .admissionsOpen
-            countdown = Self.countdown(from: today, to: closes, calendar: calendar)
+            remainingDays = Self.days(from: today, to: closes, calendar: calendar)
             eventName = "closes"
         } else if today < results {
             status = .waitingForResult
-            countdown = Self.countdown(from: today, to: results, calendar: calendar)
+            remainingDays = Self.days(from: today, to: results, calendar: calendar)
             eventName = "results"
         } else {
             status = .resultsOut
-            countdown = "Released"
+            remainingDays = nil
             eventName = ""
+        }
+
+        if let remainingDays {
+            countdown = remainingDays == 0 ? "Today" : "D-\(remainingDays)"
+        } else {
+            countdown = "Released"
         }
     }
 
-    private static func countdown(from start: Date, to end: Date, calendar: Calendar) -> String {
-        let days = max(0, calendar.dateComponents([.day], from: start, to: end).day ?? 0)
-        return days == 0 ? "Today" : "D-\(days)"
+    private static func days(from start: Date, to end: Date, calendar: Calendar) -> Int {
+        max(0, calendar.dateComponents([.day], from: start, to: end).day ?? 0)
     }
 }
 
@@ -171,7 +181,6 @@ struct ContentView: View {
             width: editor == nil ? 405 : 500,
             height: editor == nil ? compactListHeight : 530
         )
-        .background(.ultraThinMaterial)
     }
 
     private var compactListHeight: CGFloat {
@@ -367,9 +376,10 @@ struct WindowStatus: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Circle()
-                .fill(timeline.status.color)
-                .frame(width: 7, height: 7)
+            PulsingStatusDot(
+                color: timeline.status.color,
+                shouldPulse: timeline.status == .admissionsOpen || timeline.status == .resultsOut
+            )
             Text(timeline.status.title)
                 .font(.system(size: 12.5))
                 .foregroundStyle(timeline.status.color)
@@ -392,6 +402,34 @@ struct WindowStatus: View {
     }
 }
 
+struct PulsingStatusDot: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isGlowing = false
+
+    let color: Color
+    let shouldPulse: Bool
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 7, height: 7)
+            .scaleEffect(shouldPulse && isGlowing ? 1.45 : 1)
+            .opacity(shouldPulse ? (isGlowing ? 1 : 0.5) : 1)
+            .shadow(
+                color: shouldPulse ? color.opacity(isGlowing ? 1 : 0.35) : .clear,
+                radius: shouldPulse && isGlowing ? 7 : 1
+            )
+            .padding(.trailing, 2)
+            .onAppear {
+                guard shouldPulse, !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) {
+                    isGlowing = true
+                }
+            }
+            .accessibilityHidden(true)
+    }
+}
+
 struct CountdownView: View {
     let timeline: ApplicationTimeline
 
@@ -400,6 +438,7 @@ struct CountdownView: View {
             Text(timeline.countdown)
                 .font(.title3.weight(.semibold))
                 .monospacedDigit()
+                .foregroundStyle(timeline.isUrgentClosing ? .red : .primary)
                 .contentTransition(.numericText())
             if !timeline.eventName.isEmpty {
                 Text(timeline.eventName)
@@ -412,12 +451,30 @@ struct CountdownView: View {
 }
 
 struct AppFooter: View {
+    @State private var quote = "Small steps still move you forward."
+
+    private static let quotes = [
+        "Small steps still move you forward.",
+        "Your future is built one choice at a time.",
+        "Keep going; clarity follows action.",
+        "Preparation turns hope into possibility.",
+        "A brave beginning is already progress.",
+        "Trust the work you have put in.",
+        "One deadline at a time.",
+        "The next chapter is worth the effort.",
+        "Consistency carries dreams forward.",
+        "Make today count toward tomorrow."
+    ]
+
     var body: some View {
         HStack {
-            Text("Dates update automatically")
+            Text(quote)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
-            Spacer()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .help(quote)
+            Spacer(minLength: 8)
             Button("Quit") {
                 NSApplication.shared.terminate(nil)
             }
@@ -426,6 +483,14 @@ struct AppFooter: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 34)
+        .onAppear {
+            selectNextQuote()
+        }
+    }
+
+    private func selectNextQuote() {
+        let alternatives = Self.quotes.filter { $0 != quote }
+        quote = alternatives.randomElement() ?? quote
     }
 }
 
