@@ -168,7 +168,7 @@ struct ContentView: View {
             }
         }
         .frame(
-            width: editor == nil ? 360 : 500,
+            width: editor == nil ? 405 : 500,
             height: editor == nil ? compactListHeight : 530
         )
         .background(.ultraThinMaterial)
@@ -180,9 +180,10 @@ struct ContentView: View {
         let rowsHeight = store.schools.reduce(CGFloat.zero) { height, school in
             let windowCount = max(1, school.windows.count)
             let timelinesHeight = CGFloat(windowCount * 24 + max(0, windowCount - 1) * 4)
-            return height + max(32, timelinesHeight) + 19
+            return height + max(32, timelinesHeight) + 14
         }
-        return min(480, 100 + rowsHeight)
+        let separatorsHeight = CGFloat(max(0, store.schools.count - 1))
+        return min(480, 97 + rowsHeight + separatorsHeight)
     }
 
     private static func blankApplication() -> SchoolApplication {
@@ -292,7 +293,7 @@ struct SchoolRow: View {
 
     var body: some View {
         Button(action: onEdit) {
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: 2) {
                 SchoolIdentity(
                     schoolName: school.schoolName,
                     programName: school.programName,
@@ -309,17 +310,18 @@ struct SchoolRow: View {
                         )
                     }
                 }
-                .frame(width: 112, alignment: .leading)
+                .frame(width: 128, alignment: .leading)
 
                 VStack(alignment: .trailing, spacing: 4) {
                     ForEach(Array(school.windows.enumerated()), id: \.element.id) { _, window in
                         CountdownView(timeline: ApplicationTimeline(window: window))
                     }
                 }
-                .frame(width: 58, alignment: .trailing)
+                .frame(width: 55, alignment: .trailing)
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 9)
+            .padding(.vertical, 7)
+            .offset(y: 1)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -338,7 +340,7 @@ struct SchoolIdentity: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(schoolName)
                     .font(.system(size: 14))
                     .lineLimit(1)
@@ -364,7 +366,7 @@ struct WindowStatus: View {
     let timeline: ApplicationTimeline
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             Circle()
                 .fill(timeline.status.color)
                 .frame(width: 7, height: 7)
@@ -399,7 +401,7 @@ struct CountdownView: View {
                 .font(.title3.weight(.semibold))
                 .monospacedDigit()
                 .contentTransition(.numericText())
-            if !timeline.eventName.isEmpty && timeline.eventName != "opens" {
+            if !timeline.eventName.isEmpty {
                 Text(timeline.eventName)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
