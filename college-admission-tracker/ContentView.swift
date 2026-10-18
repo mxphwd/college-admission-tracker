@@ -1,17 +1,47 @@
 import SwiftUI
 import Observation
 
+enum AdmissionWindowKind: String, Codable, Equatable {
+    case regular
+    case early
+}
+
 struct ApplicationWindow: Identifiable, Codable, Equatable {
     let id: UUID
+    var kind: AdmissionWindowKind
     var opens: Date
     var closes: Date
     var results: Date
 
-    init(id: UUID = UUID(), opens: Date, closes: Date, results: Date) {
+    init(
+        id: UUID = UUID(),
+        kind: AdmissionWindowKind = .regular,
+        opens: Date,
+        closes: Date,
+        results: Date
+    ) {
         self.id = id
+        self.kind = kind
         self.opens = opens
         self.closes = closes
         self.results = results
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case opens
+        case closes
+        case results
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        kind = try container.decodeIfPresent(AdmissionWindowKind.self, forKey: .kind) ?? .regular
+        opens = try container.decode(Date.self, forKey: .opens)
+        closes = try container.decode(Date.self, forKey: .closes)
+        results = try container.decode(Date.self, forKey: .results)
     }
 }
 
@@ -158,6 +188,12 @@ struct ContentView: View {
     @State private var store = ApplicationStore()
     @State private var editor: SchoolApplication?
 
+    private let maximumListHeight: CGFloat
+
+    init(maximumListHeight: CGFloat = 700) {
+        self.maximumListHeight = maximumListHeight
+    }
+
     var body: some View {
         Group {
             if let editor {
@@ -178,7 +214,7 @@ struct ContentView: View {
             }
         }
         .frame(
-            width: editor == nil ? 405 : 500,
+            width: editor == nil ? 468 : 500,
             height: editor == nil ? compactListHeight : 530
         )
     }
@@ -188,11 +224,11 @@ struct ContentView: View {
 
         let rowsHeight = store.schools.reduce(CGFloat.zero) { height, school in
             let windowCount = max(1, school.windows.count)
-            let timelinesHeight = CGFloat(windowCount * 24 + max(0, windowCount - 1) * 4)
+            let timelinesHeight = CGFloat(windowCount * 32 + max(0, windowCount - 1) * 8)
             return height + max(32, timelinesHeight) + 14
         }
         let separatorsHeight = CGFloat(max(0, store.schools.count - 1))
-        return min(480, 97 + rowsHeight + separatorsHeight)
+        return min(maximumListHeight, 97 + rowsHeight + separatorsHeight)
     }
 
     private static func blankApplication() -> SchoolApplication {
@@ -287,7 +323,7 @@ struct EmptyApplicationsView: View {
         ContentUnavailableView {
             Label("No applications yet", systemImage: "graduationcap")
         } description: {
-            Text("Add a school and up to three application windows.")
+            Text("Add a school, regular windows, and early admission dates.")
         } actions: {
             Button("Add School", action: onAdd)
         }
@@ -310,18 +346,21 @@ struct SchoolRow: View {
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(school.windows.enumerated()), id: \.element.id) { index, window in
                         WindowStatus(
-                            number: index + 1,
-                            totalWindows: school.windows.count,
+                            marker: Self.marker(
+                                for: window,
+                                at: index,
+                                in: school.windows
+                            ),
                             timeline: ApplicationTimeline(window: window)
                         )
                     }
                 }
-                .frame(width: 128, alignment: .leading)
+                .frame(width: 142, alignment: .leading)
 
-                VStack(alignment: .trailing, spacing: 4) {
+                VStack(alignment: .trailing, spacing: 8) {
                     ForEach(Array(school.windows.enumerated()), id: \.element.id) { _, window in
                         CountdownView(timeline: ApplicationTimeline(window: window))
                     }
@@ -338,6 +377,29 @@ struct SchoolRow: View {
             Button("Edit", action: onEdit)
             Divider()
             Button("Delete", role: .destructive, action: onDelete)
+        }
+    }
+
+    private static func marker(
+        for window: ApplicationWindow,
+        at index: Int,
+        in windows: [ApplicationWindow]
+    ) -> String? {
+        if window.kind == .early {
+            return "(Early)"
+        }
+
+        let regularWindows = windows.filter { $0.kind == .regular }
+        guard regularWindows.count > 1 else { return nil }
+        let regularNumber = windows[..<index].filter { $0.kind == .regular }.count + 1
+        return "(\(roman(regularNumber)))"
+    }
+
+    private static func roman(_ number: Int) -> String {
+        switch number {
+        case 1: "I"
+        case 2: "II"
+        default: "III"
         }
     }
 }
@@ -370,8 +432,7 @@ struct SchoolIdentity: View {
 }
 
 struct WindowStatus: View {
-    let number: Int
-    let totalWindows: Int
+    let marker: String?
     let timeline: ApplicationTimeline
 
     var body: some View {
@@ -384,21 +445,13 @@ struct WindowStatus: View {
                 .font(.system(size: 12.5))
                 .foregroundStyle(timeline.status.color)
                 .lineLimit(1)
-            if totalWindows > 1 {
-                Text(Self.roman(number))
+            if let marker {
+                Text(marker)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(height: 24)
-    }
-
-    private static func roman(_ number: Int) -> String {
-        switch number {
-        case 1: "(I)"
-        case 2: "(II)"
-        default: "(III)"
-        }
+        .frame(height: 32)
     }
 }
 
@@ -434,7 +487,7 @@ struct CountdownView: View {
     let timeline: ApplicationTimeline
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 0) {
+        VStack(alignment: .trailing, spacing: -3) {
             Text(timeline.countdown)
                 .font(.title3.weight(.semibold))
                 .monospacedDigit()
@@ -446,7 +499,7 @@ struct CountdownView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(height: 24)
+        .frame(height: 32)
     }
 }
 
@@ -537,7 +590,7 @@ struct SchoolEditor: View {
                 Section {
                     ForEach($application.windows) { $window in
                         ApplicationWindowEditor(
-                            number: application.windows.firstIndex(where: { $0.id == window.id }).map { $0 + 1 } ?? 1,
+                            title: Self.title(for: window, in: application.windows),
                             window: $window,
                             canDelete: application.windows.count > 1,
                             onDelete: {
@@ -546,18 +599,28 @@ struct SchoolEditor: View {
                         )
                     }
 
-                    if application.windows.count < 3 {
-                        Button {
-                            addWindow()
-                        } label: {
-                            Label("Add application window", systemImage: "plus")
+                    HStack {
+                        if regularWindowCount < 3 {
+                            Button {
+                                addWindow(kind: .regular)
+                            } label: {
+                                Label("Add application window", systemImage: "plus")
+                            }
+                        }
+
+                        if !hasEarlyAdmission {
+                            Button {
+                                addWindow(kind: .early)
+                            } label: {
+                                Label("Add early admission", systemImage: "plus")
+                            }
                         }
                     }
                 } header: {
                     HStack {
-                        Text("Application Windows")
+                        Text("Admission Periods")
                         Spacer()
-                        Text("\(application.windows.count) of 3")
+                        Text("\(regularWindowCount) regular")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -574,19 +637,59 @@ struct SchoolEditor: View {
             && application.windows.allSatisfy { $0.opens <= $0.closes && $0.closes <= $0.results }
     }
 
-    private func addWindow() {
-        guard application.windows.count < 3 else { return }
+    private var regularWindowCount: Int {
+        application.windows.filter { $0.kind == .regular }.count
+    }
+
+    private var hasEarlyAdmission: Bool {
+        application.windows.contains { $0.kind == .early }
+    }
+
+    private func addWindow(kind: AdmissionWindowKind) {
+        guard kind == .early ? !hasEarlyAdmission : regularWindowCount < 3 else { return }
+
         let calendar = Calendar.current
-        let previous = application.windows.last
-        let opens = calendar.date(byAdding: .day, value: 30, to: previous?.closes ?? .now) ?? .now
+        let opens: Date
+        if kind == .early {
+            let earliestOpening = application.windows.map(\.opens).min() ?? .now
+            opens = calendar.date(byAdding: .day, value: -30, to: earliestOpening) ?? earliestOpening
+        } else {
+            let latestClosing = application.windows.map(\.closes).max() ?? .now
+            opens = calendar.date(byAdding: .day, value: 30, to: latestClosing) ?? latestClosing
+        }
+
         let closes = calendar.date(byAdding: .day, value: 14, to: opens) ?? opens
         let results = calendar.date(byAdding: .day, value: 30, to: closes) ?? closes
-        application.windows.append(ApplicationWindow(opens: opens, closes: closes, results: results))
+        application.windows.append(
+            ApplicationWindow(kind: kind, opens: opens, closes: closes, results: results)
+        )
+        application.windows.sort { $0.opens < $1.opens }
+    }
+
+    private static func title(
+        for window: ApplicationWindow,
+        in windows: [ApplicationWindow]
+    ) -> String {
+        guard window.kind == .regular else { return "Early Admission" }
+        let regularWindows = windows.filter { $0.kind == .regular }
+        guard regularWindows.count > 1,
+              let index = regularWindows.firstIndex(where: { $0.id == window.id }) else {
+            return "Application Window"
+        }
+        return "Application Window \(roman(index + 1))"
+    }
+
+    private static func roman(_ number: Int) -> String {
+        switch number {
+        case 1: "I"
+        case 2: "II"
+        default: "III"
+        }
     }
 }
 
 struct ApplicationWindowEditor: View {
-    let number: Int
+    let title: String
     @Binding var window: ApplicationWindow
     let canDelete: Bool
     let onDelete: () -> Void
@@ -594,7 +697,7 @@ struct ApplicationWindowEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Window \(Self.roman(number))")
+                Text(title)
                     .font(.subheadline.bold())
                 Spacer()
                 if canDelete {
@@ -617,14 +720,6 @@ struct ApplicationWindowEditor: View {
             }
         }
         .padding(.vertical, 5)
-    }
-
-    private static func roman(_ number: Int) -> String {
-        switch number {
-        case 1: "I"
-        case 2: "II"
-        default: "III"
-        }
     }
 }
 

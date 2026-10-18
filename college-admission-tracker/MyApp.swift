@@ -16,11 +16,24 @@ struct MyApp: App {
 final class CollegeApplicationsAppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let popover = NSPopover()
+    private var hostingController: NSHostingController<ContentView>?
+    private var localMouseMonitor: Any?
+    private var globalMouseMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         configureStatusItem()
         configurePopover()
+        configureDismissalMonitors()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+        }
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+        }
     }
 
     private func configureStatusItem() {
@@ -42,12 +55,49 @@ final class CollegeApplicationsAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configurePopover() {
-        let hostingController = NSHostingController(rootView: ContentView())
+        let hostingController = NSHostingController(
+            rootView: ContentView(maximumListHeight: availableContentHeight)
+        )
         hostingController.sizingOptions = [.preferredContentSize]
+        self.hostingController = hostingController
 
         popover.behavior = .transient
         popover.animates = true
         popover.contentViewController = hostingController
+    }
+
+    private var availableContentHeight: CGFloat {
+        let screen = statusItem.button?.window?.screen ?? NSScreen.main
+        return max(220, (screen?.visibleFrame.height ?? 720) - 12)
+    }
+
+    private func configureDismissalMonitors() {
+        let mouseEvents: NSEvent.EventTypeMask = [
+            .leftMouseDown,
+            .rightMouseDown,
+            .otherMouseDown
+        ]
+
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: mouseEvents
+        ) { [weak self] event in
+            guard let self, self.popover.isShown else { return event }
+
+            let popoverWindow = self.popover.contentViewController?.view.window
+            let statusItemWindow = self.statusItem.button?.window
+            if event.window !== popoverWindow && event.window !== statusItemWindow {
+                self.popover.performClose(nil)
+            }
+            return event
+        }
+
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: mouseEvents
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.popover.performClose(nil)
+            }
+        }
     }
 
     @objc
@@ -57,11 +107,15 @@ final class CollegeApplicationsAppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            hostingController?.rootView = ContentView(
+                maximumListHeight: availableContentHeight
+            )
             popover.show(
                 relativeTo: button.bounds,
                 of: button,
                 preferredEdge: .minY
             )
+            NSApp.activate()
         }
     }
 }
