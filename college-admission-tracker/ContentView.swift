@@ -185,8 +185,11 @@ final class ApplicationStore {
 }
 
 struct ContentView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var store = ApplicationStore()
+    @State private var selectedSchool: SchoolApplication?
     @State private var editor: SchoolApplication?
+    @State private var isContentVisible = true
 
     private let maximumListHeight: CGFloat
 
@@ -198,25 +201,100 @@ struct ContentView: View {
         Group {
             if let editor {
                 SchoolEditor(application: editor) { savedSchool in
-                    store.save(savedSchool)
-                    self.editor = nil
+                    animateNavigation {
+                        store.save(savedSchool)
+                        selectedSchool = savedSchool
+                        self.editor = nil
+                    }
                 } onCancel: {
-                    self.editor = nil
+                    animateNavigation {
+                        self.editor = nil
+                    }
                 }
                 .id(editor.id)
+            } else if let selectedSchool {
+                SchoolDetails(
+                    school: selectedSchool,
+                    onBack: {
+                        animateNavigation {
+                            self.selectedSchool = nil
+                        }
+                    },
+                    onEdit: {
+                        animateNavigation {
+                            self.editor = selectedSchool
+                        }
+                    },
+                    onDelete: {
+                        animateNavigation {
+                            store.delete(id: selectedSchool.id)
+                            self.selectedSchool = nil
+                        }
+                    }
+                )
+                .id(selectedSchool.id)
             } else {
                 ApplicationsList(
                     schools: store.schools,
-                    onAdd: { self.editor = Self.blankApplication() },
-                    onEdit: { self.editor = $0 },
-                    onDelete: { store.delete(id: $0) }
+                    onAdd: {
+                        animateNavigation {
+                            selectedSchool = nil
+                            self.editor = Self.blankApplication()
+                        }
+                    },
+                    onSelect: { school in
+                        animateNavigation {
+                            selectedSchool = school
+                        }
+                    }
                 )
             }
         }
+        .opacity(isContentVisible ? 1 : 0)
+        .allowsHitTesting(isContentVisible)
         .frame(
             width: editor == nil ? 468 : 500,
-            height: editor == nil ? compactListHeight : 530
+            height: contentHeight
         )
+        .clipped()
+    }
+
+    private func animateNavigation(_ updates: @escaping () -> Void) {
+        guard !reduceMotion else {
+            updates()
+            return
+        }
+
+        withAnimation(.linear(duration: 0.06)) {
+            isContentVisible = false
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(60))
+            updates()
+            withAnimation(.linear(duration: 0.08)) {
+                isContentVisible = true
+            }
+        }
+    }
+
+    private var contentHeight: CGFloat {
+        if editor != nil {
+            return 530
+        }
+
+        if let selectedSchool {
+            let periodCount = CGFloat(max(1, selectedSchool.windows.count))
+            let periodsHeight = periodCount * 81
+            let spacingHeight = max(0, periodCount - 1) * 10
+            let surroundingContentHeight: CGFloat = 134
+            return min(
+                maximumListHeight,
+                surroundingContentHeight + periodsHeight + spacingHeight
+            )
+        }
+
+        return compactListHeight
     }
 
     private var compactListHeight: CGFloat {
@@ -252,8 +330,7 @@ struct ContentView: View {
 struct ApplicationsList: View {
     let schools: [SchoolApplication]
     let onAdd: () -> Void
-    let onEdit: (SchoolApplication) -> Void
-    let onDelete: (SchoolApplication.ID) -> Void
+    let onSelect: (SchoolApplication) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -270,8 +347,7 @@ struct ApplicationsList: View {
                             VStack(spacing: 0) {
                                 SchoolRow(
                                     school: school,
-                                    onEdit: { onEdit(school) },
-                                    onDelete: { onDelete(school.id) }
+                                    onSelect: { onSelect(school) }
                                 )
                                 if index < schools.count - 1 {
                                     Divider()
@@ -331,13 +407,155 @@ struct EmptyApplicationsView: View {
     }
 }
 
-struct SchoolRow: View {
+struct SchoolDetails: View {
+    @State private var isShowingDeleteConfirmation = false
+
     let school: SchoolApplication
+    let onBack: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
-        Button(action: onEdit) {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .help("Back to applications")
+
+                SchoolIdentity(
+                    schoolName: school.schoolName,
+                    programName: school.programName,
+                    facultyName: school.facultyName
+                )
+
+                Spacer()
+            }
+            .padding(14)
+
+            Divider()
+
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(Array(school.windows.enumerated()), id: \.element.id) { index, window in
+                        AdmissionWindowDetails(
+                            title: Self.title(for: window, at: index, in: school.windows),
+                            window: window
+                        )
+                    }
+                }
+                .padding(12)
+            }
+
+            Divider()
+
+            HStack(spacing: 14) {
+                Spacer()
+
+                Button {
+                    isShowingDeleteConfirmation = true
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.red)
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .help("Delete application")
+
+                Button(action: onEdit) {
+                    Image(systemName: "pencil")
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .help("Edit application")
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 42)
+        }
+        .alert(
+            "Delete \(school.schoolName)?",
+            isPresented: $isShowingDeleteConfirmation
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive, action: onDelete)
+        } message: {
+            Text("This application and all of its admission dates will be permanently deleted.")
+        }
+    }
+
+    private static func title(
+        for window: ApplicationWindow,
+        at index: Int,
+        in windows: [ApplicationWindow]
+    ) -> String {
+        if window.kind == .early {
+            return "Early Admission"
+        }
+
+        let regularWindows = windows.filter { $0.kind == .regular }
+        guard regularWindows.count > 1 else {
+            return "Application Window"
+        }
+
+        let regularNumber = windows[..<index].filter { $0.kind == .regular }.count + 1
+        return "Application Window \(roman(regularNumber))"
+    }
+
+    private static func roman(_ number: Int) -> String {
+        switch number {
+        case 1: "I"
+        case 2: "II"
+        default: "III"
+        }
+    }
+}
+
+struct AdmissionWindowDetails: View {
+    let title: String
+    let window: ApplicationWindow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text(title)
+                .font(.subheadline.bold())
+
+            HStack(spacing: 0) {
+                DateDetail(label: "Starts", date: window.opens)
+                DateDetail(label: "Ends", date: window.closes)
+                DateDetail(label: "Results", date: window.results)
+            }
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+struct DateDetail: View {
+    let label: LocalizedStringKey
+    let date: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(date, format: .dateTime.month(.abbreviated).day().year())
+                .font(.callout)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct SchoolRow: View {
+    let school: SchoolApplication
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
             HStack(alignment: .center, spacing: 2) {
                 SchoolIdentity(
                     schoolName: school.schoolName,
@@ -373,11 +591,6 @@ struct SchoolRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .contextMenu {
-            Button("Edit", action: onEdit)
-            Divider()
-            Button("Delete", role: .destructive, action: onDelete)
-        }
     }
 
     private static func marker(
