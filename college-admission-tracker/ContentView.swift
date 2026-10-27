@@ -475,15 +475,19 @@ struct SchoolDetails: View {
             .padding(.horizontal, 14)
             .frame(height: 42)
         }
-        .alert(
-            "Delete \(school.schoolName)?",
-            isPresented: $isShowingDeleteConfirmation
-        ) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive, action: onDelete)
-        } message: {
-            Text("This application and all of its admission dates will be permanently deleted.")
+        .overlay {
+            if isShowingDeleteConfirmation {
+                DeleteConfirmationView(
+                    schoolName: school.schoolName,
+                    onCancel: {
+                        isShowingDeleteConfirmation = false
+                    },
+                    onDelete: onDelete
+                )
+                .transition(.opacity)
+            }
         }
+        .animation(.easeOut(duration: 0.1), value: isShowingDeleteConfirmation)
     }
 
     private static func title(
@@ -509,6 +513,173 @@ struct SchoolDetails: View {
         case 1: "I"
         case 2: "II"
         default: "III"
+        }
+    }
+}
+
+struct DeleteConfirmationView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var isTextFieldFocused: Bool
+    @State private var confirmationText = ""
+    @State private var isBursting = false
+
+    let schoolName: String
+    let onCancel: () -> Void
+    let onDelete: () -> Void
+
+    private let requiredText = "delete"
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.12)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+
+            confirmationCard
+                .scaleEffect(isBursting ? 1.28 : 1)
+                .opacity(isBursting ? 0 : 1)
+                .blur(radius: isBursting ? 10 : 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            isTextFieldFocused = true
+        }
+    }
+
+    private var confirmationCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 9) {
+                Image(systemName: "trash")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(progressColor)
+                    .frame(width: 22, height: 22)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Delete application")
+                        .font(.headline)
+                    Text(schoolName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Button(action: onCancel) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Cancel")
+                .keyboardShortcut(.cancelAction)
+            }
+
+            Divider()
+
+            Text("Type “delete” below to permanently remove this application and all of its dates.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            TextField("delete", text: $confirmationText)
+                .textFieldStyle(.plain)
+                .font(.system(.body, design: .monospaced))
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(fieldBackground, in: RoundedRectangle(cornerRadius: 7))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(progressColor.opacity(validPrefix ? 0.35 + progress * 0.55 : 0.18))
+                }
+                .focused($isTextFieldFocused)
+                .onSubmit(confirmDeletion)
+
+            HStack(spacing: 6) {
+                Text("Press ENTER to confirm. You can’t go back.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .opacity(isComplete ? 1 : 0)
+
+                Spacer()
+
+                HStack(spacing: 3) {
+                    ForEach(0..<requiredText.count, id: \.self) { index in
+                        Capsule()
+                            .fill(
+                                validPrefix && index < confirmationText.count
+                                    ? Color.red.opacity(0.35 + progress * 0.65)
+                                    : Color.secondary.opacity(0.18)
+                            )
+                            .frame(width: 9, height: 3)
+                    }
+                }
+                .accessibilityHidden(true)
+            }
+            .frame(height: 13)
+        }
+        .padding(14)
+        .frame(width: 336)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(progressColor.opacity(validPrefix ? 0.16 + progress * 0.38 : 0.1))
+        }
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
+        .keyframeAnimator(
+            initialValue: CGFloat.zero,
+            trigger: confirmationText
+        ) { content, offset in
+            content.offset(x: offset)
+        } keyframes: { _ in
+            let amount = validPrefix ? 1.5 + progress * 7 : 0
+            LinearKeyframe(-amount, duration: 0.035)
+            LinearKeyframe(amount, duration: 0.05)
+            LinearKeyframe(-amount * 0.7, duration: 0.045)
+            LinearKeyframe(amount * 0.45, duration: 0.04)
+            LinearKeyframe(0, duration: 0.035)
+        }
+        .animation(.easeOut(duration: 0.12), value: progress)
+        .animation(.easeOut(duration: 0.1), value: isComplete)
+    }
+
+    private var validPrefix: Bool {
+        !confirmationText.isEmpty && requiredText.hasPrefix(confirmationText)
+    }
+
+    private var isComplete: Bool {
+        confirmationText == requiredText
+    }
+
+    private var progress: Double {
+        guard validPrefix else { return 0 }
+        return min(1, Double(confirmationText.count) / Double(requiredText.count))
+    }
+
+    private var progressColor: Color {
+        validPrefix ? .red.opacity(0.35 + progress * 0.65) : .secondary
+    }
+
+    private var fieldBackground: Color {
+        validPrefix ? .red.opacity(0.04 + progress * 0.14) : .secondary.opacity(0.08)
+    }
+
+    private func confirmDeletion() {
+        guard isComplete, !isBursting else { return }
+
+        if reduceMotion {
+            onDelete()
+            return
+        }
+
+        withAnimation(.easeIn(duration: 0.18)) {
+            isBursting = true
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(170))
+            onDelete()
         }
     }
 }
