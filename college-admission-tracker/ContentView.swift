@@ -191,7 +191,7 @@ struct ContentView: View {
     @State private var editor: SchoolApplication?
     @State private var isContentVisible = true
     @State private var pageFlashOpacity = 0.0
-    @State private var pageFlashRevealProgress = 0.0
+    @State private var flashContentHeight: CGFloat?
 
     private let maximumListHeight: CGFloat
 
@@ -253,30 +253,19 @@ struct ContentView: View {
         .allowsHitTesting(isContentVisible)
         .frame(
             width: editor == nil ? 468 : 500,
-            height: contentHeight
+            height: flashContentHeight ?? contentHeight
         )
         .clipped()
         .overlay {
             GeometryReader { geometry in
-                HStack(spacing: 0) {
-                    LinearGradient(
-                        colors: [.clear, .white],
-                        startPoint: .leading,
-                        endPoint: .trailing
+                Rectangle()
+                    .fill(.white)
+                    .frame(
+                        width: geometry.size.width,
+                        height: geometry.size.height
                     )
-                    .frame(width: 54)
-
-                    Rectangle()
-                        .fill(.white)
-                        .frame(width: geometry.size.width)
-                }
-                .frame(width: geometry.size.width + 54)
-                .offset(
-                    x: -54 + pageFlashRevealProgress * (geometry.size.width + 64)
-                )
-                .opacity(pageFlashOpacity)
+                    .opacity(pageFlashOpacity)
             }
-            .ignoresSafeArea()
             .allowsHitTesting(pageFlashOpacity > 0)
         }
     }
@@ -288,22 +277,22 @@ struct ContentView: View {
             return
         }
 
-        pageFlashRevealProgress = 0
+        let remainingSchools = store.schools.filter { $0.id != id }
+        flashContentHeight = compactListHeight(for: remainingSchools)
         pageFlashOpacity = 1
 
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(55))
+            try? await Task.sleep(for: .milliseconds(70))
             store.delete(id: id)
             selectedSchool = nil
 
-            try? await Task.sleep(for: .milliseconds(140))
-            withAnimation(.easeInOut(duration: 1.5)) {
-                pageFlashRevealProgress = 1
+            try? await Task.sleep(for: .milliseconds(90))
+            withAnimation(.easeOut(duration: 0.85)) {
+                pageFlashOpacity = 0
             }
 
-            try? await Task.sleep(for: .milliseconds(1_500))
-            pageFlashOpacity = 0
-            pageFlashRevealProgress = 0
+            try? await Task.sleep(for: .milliseconds(850))
+            flashContentHeight = nil
         }
     }
 
@@ -346,14 +335,18 @@ struct ContentView: View {
     }
 
     private var compactListHeight: CGFloat {
-        guard !store.schools.isEmpty else { return 220 }
+        compactListHeight(for: store.schools)
+    }
 
-        let rowsHeight = store.schools.reduce(CGFloat.zero) { height, school in
+    private func compactListHeight(for schools: [SchoolApplication]) -> CGFloat {
+        guard !schools.isEmpty else { return 220 }
+
+        let rowsHeight = schools.reduce(CGFloat.zero) { height, school in
             let windowCount = max(1, school.windows.count)
             let timelinesHeight = CGFloat(windowCount * 32 + max(0, windowCount - 1) * 8)
             return height + max(32, timelinesHeight) + 14
         }
-        let separatorsHeight = CGFloat(max(0, store.schools.count - 1))
+        let separatorsHeight = CGFloat(max(0, schools.count - 1))
         return min(maximumListHeight, 97 + rowsHeight + separatorsHeight)
     }
 
@@ -532,10 +525,10 @@ struct SchoolDetails: View {
                     },
                     onDelete: onDelete
                 )
-                .transition(.opacity)
+                .transition(.opacity.combined(with: .scale(scale: 0.985)))
             }
         }
-        .animation(.easeOut(duration: 0.1), value: isShowingDeleteConfirmation)
+        .animation(.easeOut(duration: 0.14), value: isShowingDeleteConfirmation)
     }
 
     private static func title(
@@ -579,7 +572,7 @@ struct DeleteConfirmationView: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.12)
+            Color.black.opacity(0.18)
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
 
@@ -592,6 +585,7 @@ struct DeleteConfirmationView: View {
         .onAppear {
             isTextFieldFocused = true
         }
+        .onExitCommand(perform: onCancel)
     }
 
     private var confirmationCard: some View {
@@ -612,21 +606,11 @@ struct DeleteConfirmationView: View {
                 }
 
                 Spacer()
-
-                Button(action: onCancel) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .frame(width: 20, height: 20)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Cancel")
-                .keyboardShortcut(.cancelAction)
             }
 
             Divider()
 
-            Text("Type “delete” below to permanently remove this application and all of its dates.")
+            Text("Type “delete” below to permanently remove this application and all of its dates. Press ESC to cancel this process.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
