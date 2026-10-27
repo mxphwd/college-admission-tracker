@@ -190,6 +190,8 @@ struct ContentView: View {
     @State private var selectedSchool: SchoolApplication?
     @State private var editor: SchoolApplication?
     @State private var isContentVisible = true
+    @State private var pageFlashOpacity = 0.0
+    @State private var pageFlashRevealProgress = 0.0
 
     private let maximumListHeight: CGFloat
 
@@ -226,10 +228,7 @@ struct ContentView: View {
                         }
                     },
                     onDelete: {
-                        animateNavigation {
-                            store.delete(id: selectedSchool.id)
-                            self.selectedSchool = nil
-                        }
+                        deleteWithFlash(id: selectedSchool.id)
                     }
                 )
                 .id(selectedSchool.id)
@@ -257,6 +256,55 @@ struct ContentView: View {
             height: contentHeight
         )
         .clipped()
+        .overlay {
+            GeometryReader { geometry in
+                HStack(spacing: 0) {
+                    LinearGradient(
+                        colors: [.clear, .white],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: 54)
+
+                    Rectangle()
+                        .fill(.white)
+                        .frame(width: geometry.size.width)
+                }
+                .frame(width: geometry.size.width + 54)
+                .offset(
+                    x: -54 + pageFlashRevealProgress * (geometry.size.width + 64)
+                )
+                .opacity(pageFlashOpacity)
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(pageFlashOpacity > 0)
+        }
+    }
+
+    private func deleteWithFlash(id: SchoolApplication.ID) {
+        guard !reduceMotion else {
+            store.delete(id: id)
+            selectedSchool = nil
+            return
+        }
+
+        pageFlashRevealProgress = 0
+        pageFlashOpacity = 1
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(55))
+            store.delete(id: id)
+            selectedSchool = nil
+
+            try? await Task.sleep(for: .milliseconds(140))
+            withAnimation(.easeInOut(duration: 1.5)) {
+                pageFlashRevealProgress = 1
+            }
+
+            try? await Task.sleep(for: .milliseconds(1_500))
+            pageFlashOpacity = 0
+            pageFlashRevealProgress = 0
+        }
     }
 
     private func animateNavigation(_ updates: @escaping () -> Void) {
@@ -536,9 +584,9 @@ struct DeleteConfirmationView: View {
                 .contentShape(Rectangle())
 
             confirmationCard
-                .scaleEffect(isBursting ? 1.28 : 1)
+                .scaleEffect(isBursting ? 1.08 : 1)
                 .opacity(isBursting ? 0 : 1)
-                .blur(radius: isBursting ? 10 : 0)
+                .blur(radius: isBursting ? 4 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
@@ -673,12 +721,12 @@ struct DeleteConfirmationView: View {
             return
         }
 
-        withAnimation(.easeIn(duration: 0.18)) {
+        withAnimation(.easeOut(duration: 0.05)) {
             isBursting = true
         }
 
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(170))
+            try? await Task.sleep(for: .milliseconds(35))
             onDelete()
         }
     }
