@@ -68,7 +68,7 @@ final class CollegeApplicationsAppDelegate: NSObject, NSApplicationDelegate {
 
     private var availableContentHeight: CGFloat {
         let screen = statusItem.button?.window?.screen ?? NSScreen.main
-        return max(220, (screen?.visibleFrame.height ?? 720) - 12)
+        return max(220, (screen?.visibleFrame.height ?? 720) - 4)
     }
 
     private func configureDismissalMonitors() {
@@ -85,7 +85,11 @@ final class CollegeApplicationsAppDelegate: NSObject, NSApplicationDelegate {
 
             let popoverWindow = self.popover.contentViewController?.view.window
             let statusItemWindow = self.statusItem.button?.window
-            if event.window !== popoverWindow && event.window !== statusItemWindow {
+            if !self.isPopoverInteractionWindow(
+                event.window,
+                popoverWindow: popoverWindow,
+                statusItemWindow: statusItemWindow
+            ) {
                 self.popover.performClose(nil)
             }
             return event
@@ -98,6 +102,34 @@ final class CollegeApplicationsAppDelegate: NSObject, NSApplicationDelegate {
                 self?.popover.performClose(nil)
             }
         }
+    }
+
+    private func isPopoverInteractionWindow(
+        _ window: NSWindow?,
+        popoverWindow: NSWindow?,
+        statusItemWindow: NSWindow?
+    ) -> Bool {
+        guard let window else { return false }
+
+        if window === popoverWindow || window === statusItemWindow {
+            return true
+        }
+
+        // SwiftUI controls such as graphical DatePicker present their controls
+        // in an auxiliary AppKit panel outside the popover's window.
+        if window is NSPanel {
+            return true
+        }
+
+        var parentWindow = window.parent
+        while let parent = parentWindow {
+            if parent === popoverWindow {
+                return true
+            }
+            parentWindow = parent.parent
+        }
+
+        return false
     }
 
     @objc

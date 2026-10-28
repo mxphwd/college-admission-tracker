@@ -51,19 +51,41 @@ struct SchoolApplication: Identifiable, Codable, Equatable {
     var programName: String
     var facultyName: String
     var windows: [ApplicationWindow]
+    var isStarred: Bool
 
     init(
         id: UUID = UUID(),
         schoolName: String,
         programName: String,
         facultyName: String,
-        windows: [ApplicationWindow]
+        windows: [ApplicationWindow],
+        isStarred: Bool = false
     ) {
         self.id = id
         self.schoolName = schoolName
         self.programName = programName
         self.facultyName = facultyName
         self.windows = windows
+        self.isStarred = isStarred
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case schoolName
+        case programName
+        case facultyName
+        case windows
+        case isStarred
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        schoolName = try container.decode(String.self, forKey: .schoolName)
+        programName = try container.decode(String.self, forKey: .programName)
+        facultyName = try container.decode(String.self, forKey: .facultyName)
+        windows = try container.decode([ApplicationWindow].self, forKey: .windows)
+        isStarred = try container.decodeIfPresent(Bool.self, forKey: .isStarred) ?? false
     }
 }
 
@@ -178,6 +200,12 @@ final class ApplicationStore {
         persist()
     }
 
+    func toggleStar(id: SchoolApplication.ID) {
+        guard let index = schools.firstIndex(where: { $0.id == id }) else { return }
+        schools[index].isStarred.toggle()
+        persist()
+    }
+
     private func persist() {
         guard let data = try? JSONEncoder().encode(schools) else { return }
         UserDefaults.standard.set(data, forKey: Self.storageKey)
@@ -245,6 +273,9 @@ struct ContentView: View {
                         animateNavigation {
                             selectedSchool = school
                         }
+                    },
+                    onToggleStar: { id in
+                        store.toggleStar(id: id)
                     }
                 )
             }
@@ -344,7 +375,7 @@ struct ContentView: View {
         let rowsHeight = schools.reduce(CGFloat.zero) { height, school in
             let windowCount = max(1, school.windows.count)
             let timelinesHeight = CGFloat(windowCount * 32 + max(0, windowCount - 1) * 8)
-            return height + max(32, timelinesHeight) + 14
+            return height + max(34, timelinesHeight) + 14
         }
         let separatorsHeight = CGFloat(max(0, schools.count - 1))
         return min(maximumListHeight, 97 + rowsHeight + separatorsHeight)
@@ -372,6 +403,7 @@ struct ApplicationsList: View {
     let schools: [SchoolApplication]
     let onAdd: () -> Void
     let onSelect: (SchoolApplication) -> Void
+    let onToggleStar: (SchoolApplication.ID) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -388,7 +420,8 @@ struct ApplicationsList: View {
                             VStack(spacing: 0) {
                                 SchoolRow(
                                     school: school,
-                                    onSelect: { onSelect(school) }
+                                    onSelect: { onSelect(school) },
+                                    onToggleStar: { onToggleStar(school.id) }
                                 )
                                 if index < schools.count - 1 {
                                     Divider()
@@ -424,7 +457,8 @@ struct AppHeader: View {
             Button(action: onAdd) {
                 Image(systemName: "plus")
                     .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 24, height: 24)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Add a school")
@@ -462,7 +496,8 @@ struct SchoolDetails: View {
                 Button(action: onBack) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 12, weight: .semibold))
-                        .frame(width: 24, height: 24)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Back to applications")
@@ -501,14 +536,16 @@ struct SchoolDetails: View {
                 } label: {
                     Image(systemName: "trash")
                         .foregroundStyle(.red)
-                        .frame(width: 24, height: 24)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Delete application")
 
                 Button(action: onEdit) {
                     Image(systemName: "pencil")
-                        .frame(width: 24, height: 24)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Edit application")
@@ -733,6 +770,12 @@ struct AdmissionWindowDetails: View {
         }
         .padding(12)
         .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+        .grayscale(isFinished ? 1 : 0)
+        .opacity(isFinished ? 0.48 : 1)
+    }
+
+    private var isFinished: Bool {
+        ApplicationTimeline(window: window).status == .resultsOut
     }
 }
 
@@ -756,44 +799,57 @@ struct DateDetail: View {
 struct SchoolRow: View {
     let school: SchoolApplication
     let onSelect: () -> Void
+    let onToggleStar: () -> Void
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(alignment: .center, spacing: 2) {
-                SchoolIdentity(
-                    schoolName: school.schoolName,
-                    programName: school.programName,
-                    facultyName: school.facultyName
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(alignment: .center, spacing: 2) {
+            SchoolRowIdentity(
+                schoolName: school.schoolName,
+                programName: school.programName,
+                facultyName: school.facultyName,
+                isStarred: school.isStarred,
+                onToggleStar: onToggleStar
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(school.windows.enumerated()), id: \.element.id) { index, window in
-                        WindowStatus(
-                            marker: Self.marker(
-                                for: window,
-                                at: index,
-                                in: school.windows
-                            ),
-                            timeline: ApplicationTimeline(window: window)
-                        )
-                    }
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(school.windows.enumerated()), id: \.element.id) { index, window in
+                    WindowStatus(
+                        marker: Self.marker(
+                            for: window,
+                            at: index,
+                            in: school.windows
+                        ),
+                        timeline: ApplicationTimeline(window: window)
+                    )
                 }
-                .frame(width: 142, alignment: .leading)
-
-                VStack(alignment: .trailing, spacing: 8) {
-                    ForEach(Array(school.windows.enumerated()), id: \.element.id) { _, window in
-                        CountdownView(timeline: ApplicationTimeline(window: window))
-                    }
-                }
-                .frame(width: 55, alignment: .trailing)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .offset(y: 1)
-            .contentShape(Rectangle())
+            .frame(width: 142, alignment: .leading)
+
+            VStack(alignment: .trailing, spacing: 8) {
+                ForEach(Array(school.windows.enumerated()), id: \.element.id) { _, window in
+                    CountdownView(
+                        timeline: ApplicationTimeline(window: window),
+                        isDeemphasized: window.id != earliestActiveWindowID
+                    )
+                }
+            }
+            .frame(width: 55, alignment: .trailing)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .offset(y: 1)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
+    }
+
+    private var earliestActiveWindowID: ApplicationWindow.ID? {
+        let today = Calendar.current.startOfDay(for: .now)
+
+        return school.windows
+            .filter { Calendar.current.startOfDay(for: $0.closes) >= today }
+            .min { $0.opens < $1.opens }?
+            .id
     }
 
     private static func marker(
@@ -817,6 +873,148 @@ struct SchoolRow: View {
         case 2: "II"
         default: "III"
         }
+    }
+}
+
+struct SchoolRowIdentity: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var isLightingStar = false
+    @State private var isStarHovered = false
+    @State private var starScale = 1.0
+    @State private var starFillProgress = 1.0
+    @State private var sparkleProgress = 1.0
+
+    let schoolName: String
+    let programName: String
+    let facultyName: String
+    let isStarred: Bool
+    let onToggleStar: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .center, spacing: 3) {
+                Text(schoolName)
+                    .font(.system(size: 14))
+                    .lineLimit(1)
+
+                Text("·")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+
+                Text(programName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+
+                Button(action: toggleStar) {
+                    ZStack {
+                        StarSparkle(angle: 0, progress: sparkleProgress)
+                        StarSparkle(angle: 60, progress: sparkleProgress)
+                        StarSparkle(angle: 120, progress: sparkleProgress)
+                        StarSparkle(angle: 180, progress: sparkleProgress)
+                        StarSparkle(angle: 240, progress: sparkleProgress)
+                        StarSparkle(angle: 300, progress: sparkleProgress)
+
+                        Image(systemName: "star")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(isLightingStar ? .yellow : .secondary)
+                            .scaleEffect(starScale)
+                            .opacity(isStarred && !isLightingStar ? 0 : 1)
+                            .shadow(
+                                color: isLightingStar ? .yellow.opacity(0.9) : .clear,
+                                radius: isLightingStar ? 5.5 : 0
+                            )
+
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.yellow)
+                            .scaleEffect(starScale * (0.76 + (0.24 * starFillProgress)))
+                            .opacity(isStarred ? (isLightingStar ? starFillProgress : 1) : 0)
+                    }
+                    .frame(width: 20, height: 18)
+                    .contentShape(Rectangle().inset(by: -9))
+                }
+                .buttonStyle(.plain)
+                .opacity(isStarred || isStarHovered || isLightingStar ? 1 : 0)
+                .onHover { hovering in
+                    withAnimation(.easeOut(duration: 0.1)) {
+                        isStarHovered = hovering
+                    }
+                }
+                .help(isStarred ? "Remove star" : "Star application")
+            }
+
+            Text(facultyName)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    private func toggleStar() {
+        if isStarred {
+            resetStarAnimation()
+            onToggleStar()
+            return
+        }
+
+        onToggleStar()
+
+        guard !reduceMotion else { return }
+
+        isLightingStar = true
+        sparkleProgress = 0
+        starFillProgress = 0
+        starScale = 0.9
+
+        Task { @MainActor in
+            await Task.yield()
+
+            withAnimation(.spring(duration: 0.38, bounce: 0.34)) {
+                starScale = 1.14
+            }
+            withAnimation(.easeOut(duration: 0.5)) {
+                sparkleProgress = 1
+            }
+
+            try? await Task.sleep(for: .seconds(0.08))
+            withAnimation(.easeInOut(duration: 0.34)) {
+                starFillProgress = 1
+            }
+
+            try? await Task.sleep(for: .seconds(0.22))
+            withAnimation(.spring(duration: 0.28, bounce: 0.16)) {
+                starScale = 1
+            }
+
+            try? await Task.sleep(for: .seconds(0.3))
+            withAnimation(.easeOut(duration: 0.14)) {
+                isLightingStar = false
+            }
+        }
+    }
+
+    private func resetStarAnimation() {
+        isLightingStar = false
+        starScale = 1
+        starFillProgress = 1
+        sparkleProgress = 1
+    }
+}
+
+private struct StarSparkle: View {
+    let angle: Double
+    let progress: Double
+
+    var body: some View {
+        Capsule()
+            .fill(Color.yellow.opacity(0.9))
+            .frame(width: 1.4, height: 3.6)
+            .offset(y: -4 - (7 * progress))
+            .rotationEffect(.degrees(angle))
+            .scaleEffect(y: 1 - (0.55 * progress))
+            .opacity(1 - progress)
     }
 }
 
@@ -901,21 +1099,32 @@ struct PulsingStatusDot: View {
 
 struct CountdownView: View {
     let timeline: ApplicationTimeline
+    let isDeemphasized: Bool
 
     var body: some View {
         VStack(alignment: .trailing, spacing: -3) {
             Text(timeline.countdown)
                 .font(.title3.weight(.semibold))
                 .monospacedDigit()
-                .foregroundStyle(timeline.isUrgentClosing ? .red : .primary)
+                .foregroundStyle(countdownColor)
                 .contentTransition(.numericText())
             if !timeline.eventName.isEmpty {
                 Text(timeline.eventName)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(
+                        isDeemphasized ? Color.secondary.opacity(0.5) : Color.secondary
+                    )
             }
         }
         .frame(height: 32)
+    }
+
+    private var countdownColor: Color {
+        if isDeemphasized {
+            return .secondary.opacity(0.62)
+        }
+
+        return timeline.isUrgentClosing ? .red : .primary
     }
 }
 
@@ -1119,6 +1328,8 @@ struct ApplicationWindowEditor: View {
                 if canDelete {
                     Button(role: .destructive, action: onDelete) {
                         Image(systemName: "trash")
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.borderless)
                     .help("Remove this window")
