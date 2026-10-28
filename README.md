@@ -1,3 +1,5 @@
+**Good luck on your college applications!**
+
 Completely free, lightweight native menu bar app for tracking college admissions.
 
 Features:
