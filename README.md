@@ -1,4 +1,4 @@
-**Good luck on your college applications!**
+<mark>**Good luck on your college applications!**<mark>
 
 Completely free, lightweight native menu bar app for tracking college admissions.
 
