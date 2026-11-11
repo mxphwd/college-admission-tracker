@@ -4,6 +4,7 @@ Completely free, lightweight native menu bar app for tracking college admissions
 
 Features:
 + Completely free w/ no in-app purchases whatsoever.
++ Fully optimized to use minimum resources on background.
 + Built natively for Apple Silicon support.
 + Clean, glassy design.
 
