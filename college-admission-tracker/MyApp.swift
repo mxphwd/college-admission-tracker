@@ -13,10 +13,11 @@ struct MyApp: App {
 }
 
 @MainActor
-final class CollegeApplicationsAppDelegate: NSObject, NSApplicationDelegate {
+final class CollegeApplicationsAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let popover = NSPopover()
     private var hostingController: NSHostingController<ContentView>?
+    private var canReleaseContent = false
     private var localMouseMonitor: Any?
     private var globalMouseMonitor: Any?
 
@@ -24,15 +25,47 @@ final class CollegeApplicationsAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         configureStatusItem()
         configurePopover()
-        configureDismissalMonitors()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        removeDismissalMonitors()
+    }
+
+    func popoverWillShow(_ notification: Notification) {
+        configureDismissalMonitors()
+    }
+
+    func popoverDidShow(_ notification: Notification) {
+        // A menu-bar popover can be visible without the app being active.
+        hostingController?.rootView.isPopoverActive = true
+    }
+
+    func popoverWillClose(_ notification: Notification) {
+        // Remove the repeating animation even when the view is retained.
+        hostingController?.rootView.isPopoverActive = false
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        hostingController?.rootView.isPopoverActive = false
+        removeDismissalMonitors()
+
+        // Keep an editor or detail screen intact, including unsaved form state.
+        // The idle list can be rebuilt from persisted data on the next opening.
+        if canReleaseContent {
+            popover.contentViewController = nil
+            hostingController = nil
+            canReleaseContent = false
+        }
+    }
+
+    private func removeDismissalMonitors() {
         if let localMouseMonitor {
             NSEvent.removeMonitor(localMouseMonitor)
+            self.localMouseMonitor = nil
         }
         if let globalMouseMonitor {
             NSEvent.removeMonitor(globalMouseMonitor)
+            self.globalMouseMonitor = nil
         }
     }
 
@@ -55,15 +88,9 @@ final class CollegeApplicationsAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configurePopover() {
-        let hostingController = NSHostingController(
-            rootView: ContentView(maximumListHeight: availableContentHeight)
-        )
-        hostingController.sizingOptions = [.preferredContentSize]
-        self.hostingController = hostingController
-
+        popover.delegate = self
         popover.behavior = .transient
         popover.animates = true
-        popover.contentViewController = hostingController
     }
 
     private var availableContentHeight: CGFloat {
@@ -72,6 +99,8 @@ final class CollegeApplicationsAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureDismissalMonitors() {
+        guard localMouseMonitor == nil, globalMouseMonitor == nil else { return }
+
         let mouseEvents: NSEvent.EventTypeMask = [
             .leftMouseDown,
             .rightMouseDown,
@@ -139,9 +168,20 @@ final class CollegeApplicationsAppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            hostingController?.rootView = ContentView(
-                maximumListHeight: availableContentHeight
+            let content = ContentView(
+                maximumListHeight: availableContentHeight,
+                onReleaseEligibilityChange: { [weak self] canRelease in
+                    self?.canReleaseContent = canRelease
+                }
             )
+            if let hostingController {
+                hostingController.rootView = content
+            } else {
+                let controller = NSHostingController(rootView: content)
+                controller.sizingOptions = [.preferredContentSize]
+                hostingController = controller
+                popover.contentViewController = controller
+            }
             popover.show(
                 relativeTo: button.bounds,
                 of: button,

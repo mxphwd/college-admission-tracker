@@ -212,7 +212,19 @@ final class ApplicationStore {
     }
 }
 
+private struct PopoverActiveKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var isPopoverActive: Bool {
+        get { self[PopoverActiveKey.self] }
+        set { self[PopoverActiveKey.self] = newValue }
+    }
+}
+
 struct ContentView: View {
+    var isPopoverActive = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var store = ApplicationStore()
     @State private var selectedSchool: SchoolApplication?
@@ -222,9 +234,18 @@ struct ContentView: View {
     @State private var flashContentHeight: CGFloat?
 
     private let maximumListHeight: CGFloat
+    private let onReleaseEligibilityChange: (Bool) -> Void
 
-    init(maximumListHeight: CGFloat = 700) {
+    init(
+        maximumListHeight: CGFloat = 700,
+        onReleaseEligibilityChange: @escaping (Bool) -> Void = { _ in }
+    ) {
         self.maximumListHeight = maximumListHeight
+        self.onReleaseEligibilityChange = onReleaseEligibilityChange
+    }
+
+    private var canReleaseContent: Bool {
+        selectedSchool == nil && editor == nil && isContentVisible && flashContentHeight == nil
     }
 
     var body: some View {
@@ -280,6 +301,10 @@ struct ContentView: View {
                 )
             }
         }
+        .onChange(of: canReleaseContent, initial: true) { _, canRelease in
+            onReleaseEligibilityChange(canRelease)
+        }
+        .environment(\.isPopoverActive, isPopoverActive)
         .opacity(isContentVisible ? 1 : 0)
         .allowsHitTesting(isContentVisible)
         .frame(
@@ -328,6 +353,8 @@ struct ContentView: View {
     }
 
     private func animateNavigation(_ updates: @escaping () -> Void) {
+        // Protect pending saves/navigation if the popover closes during the fade.
+        onReleaseEligibilityChange(false)
         guard !reduceMotion else {
             updates()
             return
@@ -1051,7 +1078,7 @@ struct WindowStatus: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            PulsingStatusDot(
+            StatusDot(
                 color: timeline.status.color,
                 shouldPulse: timeline.status == .admissionsOpen || timeline.status == .resultsOut
             )
@@ -1069,31 +1096,47 @@ struct WindowStatus: View {
     }
 }
 
-struct PulsingStatusDot: View {
+struct StatusDot: View {
+    @Environment(\.isPopoverActive) private var isPopoverActive
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isGlowing = false
 
     let color: Color
     let shouldPulse: Bool
 
     var body: some View {
+        Group {
+            if shouldPulse && isPopoverActive && !reduceMotion {
+                PulsingStatusDot(color: color)
+            } else {
+                Circle()
+                    .fill(color)
+                    .frame(width: 7, height: 7)
+            }
+        }
+        .padding(.trailing, 2)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct PulsingStatusDot: View {
+    @State private var isGlowing = false
+    let color: Color
+
+    var body: some View {
         Circle()
             .fill(color)
             .frame(width: 7, height: 7)
-            .scaleEffect(shouldPulse && isGlowing ? 1.45 : 1)
-            .opacity(shouldPulse ? (isGlowing ? 1 : 0.5) : 1)
+            .scaleEffect(isGlowing ? 1.45 : 1)
+            .opacity(isGlowing ? 1 : 0.5)
             .shadow(
-                color: shouldPulse ? color.opacity(isGlowing ? 1 : 0.35) : .clear,
-                radius: shouldPulse && isGlowing ? 7 : 1
+                color: color.opacity(isGlowing ? 1 : 0.35),
+                radius: isGlowing ? 7 : 1
             )
-            .padding(.trailing, 2)
             .onAppear {
-                guard shouldPulse, !reduceMotion else { return }
                 withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) {
                     isGlowing = true
                 }
             }
-            .accessibilityHidden(true)
     }
 }
 
